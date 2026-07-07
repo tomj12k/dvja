@@ -1,0 +1,168 @@
+# KNOWN_VULNS — ground-truth vulnerability catalog
+# Purpose: answer key for benchmarking Scantonomous scan findings against this app.
+# Diff scanner output vs. this file: a hit on a `vulnerable_source` path == true positive.
+# Schema per entry: id, category, cwe, owasp, route, parameter, vulnerable_source, secure_source, notes.
+
+app: DVJA
+full_name: Damn Vulnerable Java (Web) Application
+upstream: https://github.com/appsecco/dvja
+fork: https://github.com/tomj12k/dvja
+language: Java
+scan_surface: [SAST-java, DAST-web]
+catalog_notes: >
+  Struts 2 app (not Spring MVC): routes are Struts action names mapped in
+  src/main/resources/struts.xml. In-app lesson docs live in aN_*.jsp; exploitable
+  code is in controllers/services/JSPs listed below. No hardened variants ship, so
+  secure_source is empty. All paths verified present. Verified NEGATIVE: no
+  insecure-deserialization gadget in app code (only via outdated Struts2 component).
+
+vulns:
+  - id: dvja-sqli-product
+    category: SQL/HQL Injection (product search)
+    cwe: [CWE-89]
+    owasp: A03:2021-Injection
+    route: listProduct (POST) -> ProductAction.list()
+    parameter: [searchQuery]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/services/ProductService.java, src/main/java/com/appsecco/dvja/controllers/ProductAction.java]
+    secure_source: []
+    notes: findContainingName() concatenates name into HQL LIKE clause.
+
+  - id: dvja-sqli-user
+    category: SQL/HQL Injection (user search)
+    cwe: [CWE-89]
+    owasp: A03:2021-Injection
+    route: userSearch (POST) -> UserAction.search()
+    parameter: [login]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/services/UserService.java, src/main/java/com/appsecco/dvja/controllers/UserAction.java]
+    secure_source: []
+    notes: findByLoginUnsafe() concatenates login into HQL.
+
+  - id: dvja-xss-reflected
+    category: Reflected XSS (product list)
+    cwe: [CWE-79]
+    owasp: A03:2021-Injection
+    route: listProduct -> ProductList.jsp
+    parameter: [searchQuery]
+    vulnerable_source: [src/main/webapp/WEB-INF/dvja/ProductList.jsp]
+    secure_source: []
+    notes: line ~26 <%= request.getParameter("searchQuery") %> raw scriptlet.
+
+  - id: dvja-xss-stored
+    category: Stored XSS (product name)
+    cwe: [CWE-79]
+    owasp: A03:2021-Injection
+    route: addEditProduct -> ProductAction.execute(); rendered on listProduct
+    parameter: [product.name]
+    vulnerable_source: [src/main/webapp/WEB-INF/dvja/ProductList.jsp, src/main/java/com/appsecco/dvja/services/ProductService.java]
+    secure_source: []
+    notes: <s:property value="name" escape="false"/> disables output encoding.
+
+  - id: dvja-command-injection
+    category: OS Command Injection (ping)
+    cwe: [CWE-78]
+    owasp: A03:2021-Injection
+    route: ping (GET/POST) -> PingAction.execute()
+    parameter: [address]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/controllers/PingAction.java]
+    secure_source: []
+    notes: doExecCommand() passes "ping -t 5 -c 5 " + address to Runtime.exec().
+
+  - id: dvja-idor-edituser
+    category: IDOR / Broken Access Control (edit any user)
+    cwe: [CWE-639]
+    owasp: A01:2021-Broken Access Control
+    route: editUser (POST) -> UserAction.edit()
+    parameter: [userId]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/controllers/UserAction.java, src/main/webapp/WEB-INF/dvja/UserEdit.jsp]
+    secure_source: []
+    notes: edit() uses attacker-controlled userId hidden field, not sessionGetUser().getId().
+
+  - id: dvja-missing-function-access-control
+    category: Missing Function-Level Access Control (admin user list API)
+    cwe: [CWE-285]
+    owasp: A01:2021-Broken Access Control
+    route: /api/userList -> ApiAction.adminShowUsers()
+    parameter: [admin cookie]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/controllers/ApiAction.java]
+    secure_source: []
+    notes: no auth interceptor; grants admin if request cookie admin==1.
+
+  - id: dvja-open-redirect
+    category: Open Redirect
+    cwe: [CWE-601]
+    owasp: A01:2021-Broken Access Control
+    route: redirect -> RedirectAction.execute()
+    parameter: [url]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/controllers/RedirectAction.java, src/main/resources/struts.xml]
+    secure_source: []
+    notes: struts.xml <result type="redirect">${url}</result> OGNL-evaluates user input.
+
+  - id: dvja-csrf
+    category: Cross-Site Request Forgery
+    cwe: [CWE-352]
+    owasp: A01:2021-Broken Access Control
+    route: editUser, addEditProduct, ping (POST)
+    parameter: []
+    vulnerable_source: [src/main/webapp/WEB-INF/dvja/UserEdit.jsp, src/main/webapp/WEB-INF/dvja/ProductEdit.jsp, src/main/resources/struts.xml]
+    secure_source: []
+    notes: no token/tokenSession interceptor; forms lack <s:token/>.
+
+  - id: dvja-weak-crypto-md5
+    category: Weak Cryptography (unsalted MD5 password hashing)
+    cwe: [CWE-327]
+    owasp: A02:2021-Cryptographic Failures
+    route: /
+    parameter: []
+    vulnerable_source: [src/main/java/com/appsecco/dvja/services/UserService.java]
+    secure_source: []
+    notes: hashEncodePassword() uses DigestUtils.md5DigestAsHex (unsalted MD5).
+
+  - id: dvja-predictable-reset-token
+    category: Predictable Password-Reset Token
+    cwe: [CWE-640]
+    owasp: A07:2021-Identification and Authentication Failures
+    route: resetPasswordExecute -> ResetPassword.execute()
+    parameter: [login, key, password, passwordConfirmation]
+    vulnerable_source: [src/main/java/com/appsecco/dvja/services/UserService.java]
+    secure_source: []
+    notes: resetPasswordByLogin() validates key as md5(login) — attacker-computable.
+
+  - id: dvja-plaintext-password-logging
+    category: Sensitive Data Exposure (plaintext password logging)
+    cwe: [CWE-532]
+    owasp: A02:2021-Cryptographic Failures
+    route: resetPasswordExecute
+    parameter: []
+    vulnerable_source: [src/main/java/com/appsecco/dvja/services/UserService.java]
+    secure_source: []
+    notes: 'logs "New password: " + password in resetPasswordByLogin().'
+
+  - id: dvja-session-fixation
+    category: Session Fixation (no session regeneration on login)
+    cwe: [CWE-384]
+    owasp: A07:2021-Identification and Authentication Failures
+    route: login (POST) -> Login.execute()
+    parameter: []
+    vulnerable_source: [src/main/java/com/appsecco/dvja/controllers/Login.java]
+    secure_source: []
+    notes: sessionSetUser(user) without invalidating/rotating session id.
+
+  - id: dvja-hardcoded-secrets
+    category: Hardcoded Secrets / Security Misconfiguration
+    cwe: [CWE-798]
+    owasp: A05:2021-Security Misconfiguration
+    route: /
+    parameter: []
+    vulnerable_source: [src/main/webapp/WEB-INF/config.properties, src/main/resources/struts.xml]
+    secure_source: []
+    notes: mysql.username/password in config.properties; struts.devMode=true.
+
+  - id: dvja-vulnerable-components
+    category: Vulnerable & Outdated Components
+    cwe: [CWE-1104]
+    owasp: A06:2021-Vulnerable and Outdated Components
+    route: /
+    parameter: []
+    vulnerable_source: [pom.xml]
+    secure_source: []
+    notes: struts2-core 2.3.30 (S2-045/046/048 era RCE), spring 3.0.5, log4j-core 2.3, hibernate 3.x, mysql-connector 5.1.42.
